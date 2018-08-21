@@ -1,12 +1,13 @@
 package main
 
 import (
+  "fmt"
   "net/http"
   "log"
   "io"
   "strings"
   "io/ioutil"
-  "regexp"
+  "os"
 )
 
 func main() {
@@ -26,49 +27,58 @@ func handler(w http.ResponseWriter, r *http.Request) {
 }
 
 func getHandler(w http.ResponseWriter, r *http.Request) {
-  filePath := r.URL.Path
-
-  if r.URL.Path == "/" {
-    filePath = "/index.html"
+  filePath := "public" + r.URL.Path
+  if filePath[len(filePath) - 1] == '/' {
+    filePath = filePath[:len(filePath) - 1]
   }
 
-  fileContents, err := getFileContents(filePath)
+  fmt.Println(filePath)
+
+  fileInfo, err := os.Lstat(filePath)
   if err != nil {
     sendStatus(w, http.StatusNotFound)
     return
   }
 
-  w.Write(fileContents)
+  if fileInfo.IsDir() {
+    if _, err = os.Lstat(filePath + "/index.html"); err == nil {
+      sendFile(w, filePath + "/index.html")
+      return
+    } else {
+      //show directory
+    }
+  } else {
+    sendFile(w, filePath)
+    return
+  }
+
+  sendStatus(w, http.StatusInternalServerError)
 }
 
-func getFileContents(relativePath string) ([]byte, error) {
-  contents, err := ioutil.ReadFile("public" + relativePath)
-  if err == nil {
-    return contents, nil
-  } else {
-    contents, err = ioutil.ReadFile("public" + relativePath + ".html")
-    return contents, err
+func sendFile(w http.ResponseWriter, path string) {
+  contents, err := ioutil.ReadFile(path)
+  if err != nil {
+    sendStatus(w, http.StatusInternalServerError)
+    return
   }
+
+  w.Write(contents)
 }
 
 func putHandler(w http.ResponseWriter, r *http.Request) {
-  filePath := r.URL.Path
+  filePath := "public" + r.URL.Path
 
-  if filePath[len(filePath) - 1] == '/' {
+  if fileInfo, err := os.Lstat(filePath); err == nil && fileInfo.IsDir() {
     sendStatus(w, http.StatusBadRequest)
     return
   }
 
-  if !regexp.MatchString("\\.html", filePath) {
-    if _, err := getFileContents(filePath + ".html"); err == nil {
-      filePath += ".html"
-    }
-  }
 
   buf := make([]byte, r.ContentLength)
-  _, err := io.ReadFull(r.Body, buf)
+  n, err := io.ReadFull(r.Body, buf)
   if err != nil || n <= 0 {
     sendStatus(w, http.StatusBadRequest)
+    return
   }
 
   sendStatus(w, http.StatusOK)
