@@ -1,7 +1,6 @@
 package main
 
 import (
-  "fmt"
   "errors"
   "net/http"
   "log"
@@ -100,8 +99,14 @@ func sendDir(w http.ResponseWriter, filePath string, relativePath string) {
 }
 
 func putHandler(w http.ResponseWriter, r *http.Request) {
-  filePath := "public" + r.URL.Path
+  buf := make([]byte, r.ContentLength)
+  n, err := io.ReadFull(r.Body, buf)
+  if err != nil || n <= 0 {
+    sendStatus(w, http.StatusBadRequest)
+    return
+  }
 
+  filePath := "public" + r.URL.Path
   fileInfo, err := os.Lstat(filePath)
 
   if err == nil && fileInfo.IsDir() {
@@ -110,26 +115,20 @@ func putHandler(w http.ResponseWriter, r *http.Request) {
   }
 
   created := err != nil
+  var file *os.File
 
   if created {
-    _, err = createFile(filePath)
+    file, err = createFile(filePath)
     if err != nil {
       sendStatus(w, http.StatusNotAcceptable)
       return
     }
-  }
-
-  file, err := os.OpenFile(filePath, os.O_WRONLY, os.FileMode(0644))
-  if err != nil {
-    sendStatus(w, http.StatusInternalServerError)
-    return
-  }
-
-  buf := make([]byte, r.ContentLength)
-  n, err := io.ReadFull(r.Body, buf)
-  if err != nil || n <= 0 {
-    sendStatus(w, http.StatusBadRequest)
-    return
+  } else {
+    file, err = os.OpenFile(filePath, os.O_WRONLY, os.FileMode(0644))
+    if err != nil {
+      sendStatus(w, http.StatusInternalServerError)
+      return
+    }
   }
 
   err = file.Truncate(int64(n))
@@ -153,33 +152,28 @@ func putHandler(w http.ResponseWriter, r *http.Request) {
   }
 }
 
-func createFile(path string) ([]string, error) {
-  var created []string
+func createFile(path string) (*os.File, error) {
   dirs := strings.Split(path, "/")
+
   for i := 0; i < len(dirs) - 1; i++ {
     fp := strings.Join(dirs[:i+1], "/")
     fi, err := os.Lstat(fp)
+
+    if err == nil && !fi.IsDir() {
+      return nil, errors.New("file in path")
+    }
+
     if err != nil {
       err := os.Mkdir(fp, os.FileMode(0755))
-      fmt.Println(fp)
+
       if err != nil {
-        return created, err
-      }
-      created = append(created, fp)
-    } else {
-      if !fi.IsDir() {
-        return created, errors.New("file in path")
+        return nil, err
       }
     }
   }
 
   f, err := os.OpenFile(path, os.O_CREATE, 0644)
-  if err != nil {
-    return created, err
-  }
-  created = append(created, path)
-  f.Close()
-  return created, nil
+  return f, err
 }
 
 func sendStatus(w http.ResponseWriter, status int) {
